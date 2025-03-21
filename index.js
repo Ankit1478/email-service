@@ -1,8 +1,16 @@
 require('dotenv').config();
 const { MongoClient } = require('mongodb');
 const { Resend } = require('resend');
+const express = require('express');
 const promotionalEmail = require('./30dctemp/promotionalEmail');
 const skillsetEmail = require('./skillsettemp/skillsetEmail');
+
+// Initialize Express app
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Enable JSON body parsing
+app.use(express.json());
 
 // Initialize Resend with API key
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -541,13 +549,80 @@ async function skillSetEmailRoute() {
   }
 }
 
-// Determine which route to run based on process argument
-const routeArg = process.argv[2];
+// Express API routes
 
-if (routeArg === 'skillset') {
-  console.log('Running SkillSet email route');
-  skillSetEmailRoute();
-} else {
-  console.log('Running default 30DayCoding email route');
-  main();
-} 
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', message: 'Email notification service is running' });
+});
+
+// API endpoint for 30 Days Coding emails
+app.post('/api/send-emails/30dc', async (req, res) => {
+  try {
+    console.log('Starting 30 Days Coding email process via API');
+    // Run the email sending process
+    await main();
+    res.status(200).json({ success: true, message: '30 Days Coding emails processed successfully' });
+  } catch (error) {
+    console.error('API Error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// API endpoint for SkillSet emails
+app.post('/api/send-emails/skillset', async (req, res) => {
+  try {
+    console.log('Starting SkillSet email process via API');
+    // Run the email sending process
+    await skillSetEmailRoute();
+    res.status(200).json({ success: true, message: 'SkillSet emails processed successfully' });
+  } catch (error) {
+    console.error('API Error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// API endpoint to run both email processes
+app.post('/api/send-emails/all', async (req, res) => {
+  try {
+    console.log('Starting both email processes via API');
+    
+    // Run both processes sequentially
+    await main();
+    await skillSetEmailRoute();
+    
+    res.status(200).json({ success: true, message: 'All emails processed successfully' });
+  } catch (error) {
+    console.error('API Error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Start the Express server if this file is run directly
+if (require.main === module) {
+  // Start the Express server
+  app.listen(PORT, () => {
+    console.log(`Email notification service running on port ${PORT}`);
+    
+    // Determine which route to run based on process argument
+    const routeArg = process.argv[2];
+
+    // If run from command line, also execute the requested email function
+    if (routeArg === 'skillset') {
+      console.log('Running SkillSet email route');
+      skillSetEmailRoute();
+    } else if (routeArg === 'all') {
+      console.log('Running both email routes');
+      // Run both processes sequentially
+      main().then(() => skillSetEmailRoute());
+    } else if (routeArg === 'api-only') {
+      console.log('Running in API-only mode, waiting for API requests');
+    } else {
+      console.log('Running default 30DayCoding email route');
+      main();
+    }
+  });
+}
+
+// Export for testing or importing
+module.exports = { app, main, skillSetEmailRoute }; 

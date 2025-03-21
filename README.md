@@ -12,6 +12,8 @@ A Node.js application that extracts emails from MongoDB order data and sends pro
 - **Batch processing** to respect Resend's 100 email limit per request
 - **URL filtering** to identify course types based on URL patterns
 - **Multiple platforms support** for both 30 Days Coding and SkillSet Master
+- **REST API** for triggering email sending operations
+- **Retry logic** for handling temporary failures (3 retries with delay)
 
 ## Prerequisites
 
@@ -32,17 +34,20 @@ npm install
 
 ```
 MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/database_name
+MONGO_URI_SKILLSET=mongodb+srv://username:password@cluster.mongodb.net/skillset_database
 RESEND_API_KEY=your_resend_api_key
-FROM_EMAIL=your-email@example.com
+FROM_EMAIL=noreply@30dayscoding.com
+FROM_EMAIL_SKILLSET=noreply@skillsetmaster.com
 SITE_URL=https://www.30dayscoding.com/
 SKILLSET_URL=https://www.skillsetmaster.com/
-FROM_EMAIL_SKILLSET=noreply@skillsetmaster.com
-TEST_MODE=false
+PORT=3000
 ```
 
 ## Usage
 
-### For 30 Days Coding:
+### Command Line Mode
+
+#### For 30 Days Coding:
 
 Run the application with:
 
@@ -56,13 +61,72 @@ or explicitly:
 node index.js
 ```
 
-### For SkillSet Master:
+#### For SkillSet Master:
 
 Run the application with:
 
 ```bash
+npm run start:skillset
+```
+
+or:
+
+```bash
 node index.js skillset
 ```
+
+#### For Both Platforms:
+
+Run both email processes sequentially:
+
+```bash
+npm run start:all
+```
+
+or:
+
+```bash
+node index.js all
+```
+
+### API Mode
+
+Start the application in API-only mode:
+
+```bash
+npm run start:api
+```
+
+or:
+
+```bash
+node index.js api-only
+```
+
+This will start an Express server with the following endpoints:
+
+- `GET /health` - Health check endpoint
+- `POST /api/send-emails/30dc` - Trigger 30 Days Coding emails
+- `POST /api/send-emails/skillset` - Trigger SkillSet Master emails
+- `POST /api/send-emails/all` - Trigger both email processes
+
+Example API usage:
+
+```bash
+# Health check
+curl http://localhost:3000/health
+
+# Trigger 30DC emails
+curl -X POST http://localhost:3000/api/send-emails/30dc
+
+# Trigger SkillSet emails
+curl -X POST http://localhost:3000/api/send-emails/skillset
+
+# Trigger both
+curl -X POST http://localhost:3000/api/send-emails/all
+```
+
+## What the Application Does
 
 The application will:
 1. Connect to the appropriate MongoDB database
@@ -72,6 +136,7 @@ The application will:
 5. Process emails in batches of 100 (Resend's limit)
 6. Send promotional emails to eligible customers
 7. Log the results to the console
+8. Apply retry logic (3 attempts) if sending fails
 
 ## Email Templates
 
@@ -95,14 +160,15 @@ Supports multiple course types:
 
 Each template is personalized based on the course type detected from the sourceUrl.
 
-## Testing
+## Deployment
 
-To run in test mode without sending actual emails:
+For detailed deployment instructions, see [DEPLOYMENT.md](DEPLOYMENT.md).
 
-1. Set `TEST_MODE=true` in your `.env` file
-2. Run the application: `npm start` or `node index.js skillset`
-
-In test mode, email contents will be logged to the console, but no actual emails will be sent.
+Options include:
+- Traditional VPS/Dedicated Server
+- Heroku
+- AWS Elastic Beanstalk
+- Docker
 
 ## Customization
 
@@ -110,7 +176,7 @@ In test mode, email contents will be logged to the console, but no actual emails
 - Modify the SkillSet Master email template in `skillsettemp/skillsetEmail.js`
 - Adjust the URL pattern detection in the main functions
 - Change the batch size by modifying the `BATCH_SIZE` constant
-- Modify the duplicate email handling logic in the main functions
+- Modify the retry logic by changing `MAX_RETRIES` and `RETRY_DELAY` constants
 
 ## License
 

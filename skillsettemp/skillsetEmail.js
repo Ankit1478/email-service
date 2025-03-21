@@ -617,9 +617,6 @@ const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}) => {
 
       ${courseDetails}
 
-     
-
-     
       <a href="${checkoutUrl}" class="cta-button">Complete Your Registration →</a>
       
     </div>

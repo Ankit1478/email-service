@@ -4,7 +4,14 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node index.js"
+    "start": "node index.js",
+    "start:30dc": "node index.js",
+    "start:skillset": "node index.js skillset",
+    "start:all": "node index.js all",
+    "start:api": "node index.js api-only"
+  },
+  "engines": {
+    "node": ">=14.0.0"
   },
   "keywords": [],
   "author": "",

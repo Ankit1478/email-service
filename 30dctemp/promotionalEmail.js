@@ -268,10 +268,6 @@ const promotionalEmail = (name, siteUrl, courseType = 'beginner', priceData = {}
 
       ${courseDetails}
 
-      <div class="guarantee">
-        <h3>🛡️ Our Promise to You</h3>
-        <p>Lifetime access • Regular updates • Project-based learning • Expert support • Certificate of completion</p>
-      </div>
 
       <table width="100%" border="0" cellspacing="0" cellpadding="0">
         <tr>
