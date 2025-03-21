@@ -2,6 +2,7 @@ require('dotenv').config();
 const { MongoClient } = require('mongodb');
 const { Resend } = require('resend');
 const express = require('express');
+const axios = require('axios');
 const promotionalEmail = require('./30dctemp/promotionalEmail');
 const skillsetEmail = require('./skillsettemp/skillsetEmail');
 
@@ -23,6 +24,7 @@ const skillsetClient = new MongoClient(skillsetUri);
 
 // Maximum emails to send in one batch (Resend limit is 100)
 const BATCH_SIZE = 100;
+const WHATSAPP_BATCH_SIZE = 100; // Maximum WhatsApp messages to send in one batch
 
 // Retry configuration
 const MAX_RETRIES = 3;
@@ -549,6 +551,246 @@ async function skillSetEmailRoute() {
   }
 }
 
+/**
+ * Sends a WhatsApp notification to the customer using Interakt.ai API
+ * @param {Object} customerData - The customer data with contact and course information
+ * @returns {Promise} - Response from Interakt.ai API
+ */
+async function sendWhatsAppNotification(customerData) {
+  try {
+    // Extract customer data
+    const { name, phone } = customerData.customerDetails;
+    
+    // If no phone number is available, skip
+    if (!phone) {
+      console.log(`No phone number found for customer ${name}, skipping WhatsApp notification`);
+      return { status: 'skipped', reason: 'no_phone_number' };
+    }
+    
+    // Clean the phone number (remove +91 if present, spaces, etc.)
+    let phoneNumber = phone.toString().trim();
+    if (phoneNumber.startsWith('+91')) {
+      phoneNumber = phoneNumber.substring(3);
+    }
+    // Remove any non-numeric characters
+    phoneNumber = phoneNumber.replace(/\D/g, '');
+    
+    // Validate phone number (should be 10 digits for India)
+    if (phoneNumber.length !== 10) {
+      console.log(`Invalid phone number for customer ${name}: ${phone}, skipping WhatsApp notification`);
+      return { status: 'skipped', reason: 'invalid_phone_number' };
+    }
+    
+    // Get course type
+    const courseType = customerData.courseType || 'beginner'; // Default to beginner if not specified
+    
+    // Format course type name for display
+    let courseDisplayName = courseType === 'advanced' ? '30 Days Coding - Advanced' : '30 Days Coding - Beginner';
+    
+    // Extract and format price information
+    let formattedPrice = '₹999';
+    
+    if (customerData.amount) {
+      let actualAmount = 0;
+      
+      // Handle MongoDB number format if present
+      if (customerData.amount.$numberInt) {
+        actualAmount = parseInt(customerData.amount.$numberInt, 10);
+      } else if (typeof customerData.amount === 'number') {
+        actualAmount = customerData.amount;
+      } else if (typeof customerData.amount === 'string') {
+        actualAmount = parseInt(customerData.amount, 10);
+      }
+      
+      // Convert from paise to rupees (if needed)
+      const actualPrice = actualAmount / 100;
+      
+      // Format price with commas and currency symbol
+      formattedPrice = '₹' + actualPrice.toLocaleString('en-IN');
+    }
+    
+    // Get the source URL for the button
+    const sourceUrl = customerData.sourceUrl || `${process.env.SITE_URL}/checkout?course=${courseType}`;
+    
+    // Define the request data for Interakt.ai API
+    const requestData = {
+      countryCode: "+91",
+      phoneNumber: phoneNumber,
+      fullPhoneNumber: ``,
+      campaignId: "", 
+      callbackData: "some text here",
+      type: "Template",
+      template: {
+        "name": "30dc_notification_di",
+        "languageCode": "en",
+        bodyValues: [
+          name ,  // First variable - customer name
+          courseDisplayName, // Second variable - course type
+        ],
+        buttonValues: {
+          "1": [
+            sourceUrl       // Button URL - course checkout page
+          ]
+        }
+      }
+    };
+    
+    // Use retry logic for sending WhatsApp messages
+    const sendWhatsAppWithRetry = async () => {
+      return await axios.post(
+        'https://api.interakt.ai/v1/public/message/',
+        requestData,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Basic ${process.env.INTERAKT_API_KEY}`
+          }
+        }
+      );
+    };
+    
+    const response = await withRetry(sendWhatsAppWithRetry);
+    console.log(`WhatsApp notification sent to ${phoneNumber} for course type: ${courseType}`);
+    return { 
+      status: 'success', 
+      phone: phoneNumber,
+      courseType: courseType,
+      responseData: response.data 
+    };
+  } catch (error) {
+    console.error(`Error sending WhatsApp notification to ${customerData.customerDetails.phone} after all retry attempts:`, error.message);
+    return { 
+      status: 'failed', 
+      phone: customerData.customerDetails.phone,
+      error: error.message 
+    };
+  }
+}
+
+/**
+ * Process a batch of WhatsApp notifications
+ * @param {Array} batch - Batch of customer data to process
+ * @returns {Object} - Results of processing
+ */
+async function processWhatsAppBatch(batch) {
+  console.log(`Processing batch of ${batch.length} WhatsApp notifications...`);
+  
+  const results = {
+    successful: [],
+    failed: [],
+    skipped: []
+  };
+  
+  // Process each notification individually
+  for (const customer of batch) {
+    try {
+      const result = await sendWhatsAppNotification(customer);
+      
+      if (result.status === 'success') {
+        results.successful.push({
+          phone: result.phone,
+          courseType: result.courseType
+        });
+      } else if (result.status === 'skipped') {
+        results.skipped.push({
+          customer: customer.customerDetails.name,
+          reason: result.reason
+        });
+      } else {
+        results.failed.push({
+          phone: customer.customerDetails.phone,
+          error: result.error
+        });
+      }
+    } catch (error) {
+      results.failed.push({
+        phone: customer.customerDetails.phone,
+        error: error.message
+      });
+    }
+  }
+  
+  // Log summary
+  console.log(`WhatsApp batch complete. Successfully sent: ${results.successful.length}, Failed: ${results.failed.length}, Skipped: ${results.skipped.length}`);
+  
+  if (results.failed.length > 0) {
+    console.log('Failed WhatsApp notifications:', results.failed.map(f => f.phone).join(', '));
+  }
+  
+  return results;
+}
+
+/**
+ * Main function for WhatsApp notification processing for 30DC
+ */
+async function sendWhatsAppNotifications30DC() {
+  try {
+    // Connect to MongoDB
+    const collection = await connectToMongoDB();
+    
+    // Fetch payments data
+    const paymentsData = await fetchPaymentsData(collection);
+    console.log(`Found ${paymentsData.length} payment records to process for WhatsApp`);
+    
+    // Filter payments based on sourceUrl criteria (same as email)
+    const eligiblePayments = paymentsData.filter(payment => shouldSendEmail(payment));
+    console.log(`${eligiblePayments.length} payments match the criteria for WhatsApp notifications`);
+    
+    // Handle duplicate customers by creating a Map with phone as key
+    const phoneMap = new Map();
+    
+    // Process each payment record, keeping only the most recent for each phone number
+    eligiblePayments.forEach(payment => {
+      const phone = payment.customerDetails?.phone;
+      
+      // Skip if no phone number
+      if (!phone) return;
+      
+      // Get timestamp from MongoDB date format
+      const currentDate = payment.createdAt?.$date?.$numberLong 
+        ? Number(payment.createdAt.$date.$numberLong) 
+        : new Date().getTime();
+      
+      // Compare with existing entry
+      const existingDate = phoneMap.get(phone)?.createdAt?.$date?.$numberLong
+        ? Number(phoneMap.get(phone).createdAt.$date.$numberLong)
+        : 0;
+      
+      if (!phoneMap.has(phone) || currentDate > existingDate) {
+        phoneMap.set(phone, payment);
+      }
+    });
+    
+    console.log(`Found ${phoneMap.size} unique phone numbers to send WhatsApp notifications to`);
+    
+    // Convert Map back to array and prepare for batch processing
+    const uniqueCustomers = Array.from(phoneMap.values());
+    
+    // Process in batches
+    for (let i = 0; i < uniqueCustomers.length; i += WHATSAPP_BATCH_SIZE) {
+      const batch = uniqueCustomers.slice(i, i + WHATSAPP_BATCH_SIZE);
+      console.log(`Processing WhatsApp batch ${Math.floor(i/WHATSAPP_BATCH_SIZE) + 1} of ${Math.ceil(uniqueCustomers.length/WHATSAPP_BATCH_SIZE)}`);
+      await processWhatsAppBatch(batch);
+      
+      // If we have more batches to process, wait a bit to avoid rate limits
+      if (i + WHATSAPP_BATCH_SIZE < uniqueCustomers.length) {
+        console.log('Waiting 5 seconds before processing next WhatsApp batch...');
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      }
+    }
+    
+    console.log('WhatsApp notification processing completed successfully');
+    return { success: true, message: 'WhatsApp notifications for 30DC processed successfully' };
+  } catch (error) {
+    console.error('Error in WhatsApp notification process:', error);
+    return { success: false, error: error.message };
+  } finally {
+    // Close the MongoDB connection
+    await client.close();
+    console.log('MongoDB connection closed after WhatsApp processing');
+  }
+}
+
 // Express API routes
 
 // Health check endpoint
@@ -582,6 +824,27 @@ app.get('/api/send-emails/skillset', async (req, res) => {
   }
 });
 
+// API endpoint to run both email and WhatsApp processes for 30DC
+app.get('/api/send-all/30dc', async (req, res) => {
+  try {
+    console.log('Starting both email and WhatsApp processes for 30DC via API');
+    
+    // Run both processes sequentially
+    await main();
+    const whatsappResult = await sendWhatsAppNotifications30DC();
+    
+    res.status(200).json({ 
+      success: true, 
+      message: 'All 30DC notifications processed successfully',
+      email: { success: true },
+      whatsapp: whatsappResult
+    });
+  } catch (error) {
+    console.error('API Error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // API endpoint to run both email processes
 app.get('/api/send-emails/all', async (req, res) => {
   try {
@@ -592,6 +855,18 @@ app.get('/api/send-emails/all', async (req, res) => {
     await skillSetEmailRoute();
     
     res.status(200).json({ success: true, message: 'All emails processed successfully' });
+  } catch (error) {
+    console.error('API Error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// API endpoint for WhatsApp notifications for 30 Days Coding
+app.get('/api/send-whatsapp/30dc', async (req, res) => {
+  try {
+    console.log('Starting 30 Days Coding WhatsApp notification process via API');
+    const result = await sendWhatsAppNotifications30DC();
+    res.status(200).json(result);
   } catch (error) {
     console.error('API Error:', error);
     res.status(500).json({ success: false, message: error.message });
@@ -625,4 +900,4 @@ if (require.main === module) {
 }
 
 // Export for testing or importing
-module.exports = { app, main, skillSetEmailRoute }; 
+module.exports = { app, main, skillSetEmailRoute, sendWhatsAppNotifications30DC }; 
