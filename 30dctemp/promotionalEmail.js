@@ -1,11 +1,13 @@
-const promotionalEmail = (name, siteUrl, courseType = 'beginner') => {
+const promotionalEmail = (name, siteUrl, courseType = 'beginner', priceData = {}) => {
   // Customize the messaging based on course type
   let courseTypeMessage = '';
   let courseDetails = '';
-  let price = '';
   let checkoutUrl = '';
-  let originalPrice = '';
-  let savings = '';
+  
+  // Set default price data if not provided
+  const price = priceData.price || '₹999';
+  const originalPrice = priceData.originalPrice || (courseType === 'advanced' ? '₹3,999' : '₹1,999');
+  const savings = priceData.savings || (courseType === 'advanced' ? '₹1,000' : '₹1,000');
   
   switch(courseType) {
     case 'beginner':
@@ -47,9 +49,6 @@ const promotionalEmail = (name, siteUrl, courseType = 'beginner') => {
           </div>
         </div>
       </div>`;
-      originalPrice = '₹1,999';
-      price = '₹999';
-      savings = '₹1,000';
       checkoutUrl = `${siteUrl}/checkout?course=beginner`;
       break;
   
@@ -92,9 +91,6 @@ const promotionalEmail = (name, siteUrl, courseType = 'beginner') => {
           </div>
         </div>
       </div>`;
-      originalPrice = '₹3,999';
-      price = '₹2,999';
-      savings = '₹1,000';
       checkoutUrl = `${siteUrl}/checkout?course=advanced`;
       break;
     default:
