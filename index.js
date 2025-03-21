@@ -667,6 +667,154 @@ async function sendWhatsAppNotification(customerData) {
   }
 }
 
+
+async function sendWhatsAppNotificationSkillSet(customerData) {
+  try {
+    // Extract customer data
+    const { name, phone } = customerData.customerDetails;
+    
+    // If no phone number is available, skip
+    if (!phone) {
+      console.log(`No phone number found for customer ${name}, skipping WhatsApp notification`);
+      return { status: 'skipped', reason: 'no_phone_number' };
+    }
+    
+    // Clean the phone number (remove +91 if present, spaces, etc.)
+    let phoneNumber = phone.toString().trim();
+    if (phoneNumber.startsWith('+91')) {
+      phoneNumber = phoneNumber.substring(3);
+    }
+    // Remove any non-numeric characters
+    phoneNumber = phoneNumber.replace(/\D/g, '');
+    
+    // Validate phone number (should be 10 digits for India)
+    if (phoneNumber.length !== 10) {
+      console.log(`Invalid phone number for customer ${name}: ${phone}, skipping WhatsApp notification`);
+      return { status: 'skipped', reason: 'invalid_phone_number' };
+    }
+    
+    // Get course type - first try from customerData.courseType, then from sourceUrl
+    let courseType = customerData.courseType || '';
+    
+    // If courseType is not specified in the order data, determine it from the sourceUrl
+    if (!courseType) {
+      const sourceUrl = customerData.sourceUrl || '';
+      courseType = getCourseTypeFromSourceUrl(sourceUrl);
+    }
+    
+    // Format course type name for display based on the specific SkillSet course
+    let courseDisplayName;
+    
+    // Set the display name based on course type
+    switch(courseType) {
+      case 'ai':
+        courseDisplayName = 'AI Tools Mastery';
+        break;
+      case 'data-analyst':
+        courseDisplayName = 'Data Analytics';
+        break;
+      case 'chatgpt':
+        courseDisplayName = 'ChatGPT & Prompt Engineering';
+        break;
+      case 'studyabroad':
+        courseDisplayName = 'Study Abroad Program';
+        break;
+      case 'linkedin':
+        courseDisplayName = 'LinkedIn Mastery';
+        break;
+      case 'ai-apps':
+        courseDisplayName = 'AI Apps Development';
+        break;
+      case 'immigrants':
+        courseDisplayName = 'Immigrants Success System';
+        break;
+      case 'video-editing':
+        courseDisplayName = 'Video Editing Mastery';
+        break;
+      default:
+        courseDisplayName = 'SkillSet Master Course';
+    }
+    
+    // Declare formattedPrice variable
+    let formattedPrice = '₹999';
+    
+    if (customerData.amount) {
+      let actualAmount = 0;
+      
+      // Handle MongoDB number format if present
+      if (customerData.amount.$numberInt) {
+        actualAmount = parseInt(customerData.amount.$numberInt, 10);
+      } else if (typeof customerData.amount === 'number') {
+        actualAmount = customerData.amount;
+      } else if (typeof customerData.amount === 'string') {
+        actualAmount = parseInt(customerData.amount, 10);
+      }
+      
+      // Convert from paise to rupees (if needed)
+      const actualPrice = actualAmount / 100;
+      
+      // Format price with commas and currency symbol
+      formattedPrice = '₹' + actualPrice.toLocaleString('en-IN');
+    }
+    
+    // Get the source URL for the button
+    const sourceUrl = customerData.sourceUrl || `${process.env.SKILLSET_URL}/${courseType}`;
+    
+    // Define the request data for Interakt.ai API
+    const requestData = {
+      countryCode: "+91",
+      phoneNumber: phoneNumber,
+      fullPhoneNumber: ``,
+      campaignId: "", 
+      callbackData: "some text here",
+      type: "Template",
+      template: {
+        "name": "skillset_notification",  // Use skillset-specific template name
+        "languageCode": "en",
+        bodyValues: [
+          name,  // First variable - customer name
+          courseDisplayName, // Second variable - course type
+        ],
+        buttonValues: {
+          "1": [
+            sourceUrl  // Button URL - course checkout page
+          ]
+        }
+      }
+    };
+    
+    // Use retry logic for sending WhatsApp messages
+    const sendWhatsAppWithRetry = async () => {
+      return await axios.post(
+        'https://api.interakt.ai/v1/public/message/',
+        requestData,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Basic ${process.env.INTERAKT_API_KEY_SKILLSET || process.env.INTERAKT_API_KEY}`
+          }
+        }
+      );
+    };
+    
+    const response = await withRetry(sendWhatsAppWithRetry);
+    console.log(`SkillSet WhatsApp notification sent to ${phoneNumber} for course type: ${courseType}`);
+    return { 
+      status: 'success', 
+      phone: phoneNumber,
+      courseType: courseType,
+      responseData: response.data 
+    };
+  } catch (error) {
+    console.error(`Error sending SkillSet WhatsApp notification to ${customerData.customerDetails.phone} after all retry attempts:`, error.message);
+    return { 
+      status: 'failed', 
+      phone: customerData.customerDetails.phone,
+      error: error.message 
+    };
+  }
+}
+
 /**
  * Process a batch of WhatsApp notifications
  * @param {Array} batch - Batch of customer data to process
@@ -715,6 +863,59 @@ async function processWhatsAppBatch(batch) {
   
   if (results.failed.length > 0) {
     console.log('Failed WhatsApp notifications:', results.failed.map(f => f.phone).join(', '));
+  }
+  
+  return results;
+}
+
+/**
+ * Process a batch of WhatsApp notifications for SkillSet
+ * @param {Array} batch - Batch of customer data to process
+ * @returns {Object} - Results of processing
+ */
+async function processWhatsAppBatchSkillSet(batch) {
+  console.log(`Processing batch of ${batch.length} SkillSet WhatsApp notifications...`);
+  
+  const results = {
+    successful: [],
+    failed: [],
+    skipped: []
+  };
+  
+  // Process each notification individually
+  for (const customer of batch) {
+    try {
+      const result = await sendWhatsAppNotificationSkillSet(customer);
+      
+      if (result.status === 'success') {
+        results.successful.push({
+          phone: result.phone,
+          courseType: result.courseType
+        });
+      } else if (result.status === 'skipped') {
+        results.skipped.push({
+          customer: customer.customerDetails.name,
+          reason: result.reason
+        });
+      } else {
+        results.failed.push({
+          phone: customer.customerDetails.phone,
+          error: result.error
+        });
+      }
+    } catch (error) {
+      results.failed.push({
+        phone: customer.customerDetails.phone,
+        error: error.message
+      });
+    }
+  }
+  
+  // Log summary
+  console.log(`SkillSet WhatsApp batch complete. Successfully sent: ${results.successful.length}, Failed: ${results.failed.length}, Skipped: ${results.skipped.length}`);
+  
+  if (results.failed.length > 0) {
+    console.log('Failed SkillSet WhatsApp notifications:', results.failed.map(f => f.phone).join(', '));
   }
   
   return results;
@@ -788,6 +989,77 @@ async function sendWhatsAppNotifications30DC() {
     // Close the MongoDB connection
     await client.close();
     console.log('MongoDB connection closed after WhatsApp processing');
+  }
+}
+
+/**
+ * Main function for WhatsApp notification processing for SkillSet
+ */
+async function sendWhatsAppNotificationsSkillSet() {
+  try {
+    // Connect to MongoDB
+    const collection = await connectToSkillSetMongoDB();
+    
+    // Fetch orders data
+    const ordersData = await fetchSkillSetOrders(collection);
+    console.log(`Found ${ordersData.length} SkillSet orders to process for WhatsApp`);
+    
+    // Filter orders based on criteria for SkillSet
+    const eligibleOrders = ordersData.filter(order => shouldSendSkillSetEmail(order));
+    console.log(`${eligibleOrders.length} orders match the criteria for SkillSet WhatsApp notifications`);
+    
+    // Handle duplicate customers by creating a Map with phone as key
+    const phoneMap = new Map();
+    
+    // Process each order record, keeping only the most recent for each phone number
+    eligibleOrders.forEach(order => {
+      const phone = order.customerDetails?.phone;
+      
+      // Skip if no phone number
+      if (!phone) return;
+      
+      // Get timestamp from MongoDB date format
+      const currentDate = order.createdAt?.$date?.$numberLong 
+        ? Number(order.createdAt.$date.$numberLong) 
+        : new Date().getTime();
+      
+      // Compare with existing entry
+      const existingDate = phoneMap.get(phone)?.createdAt?.$date?.$numberLong
+        ? Number(phoneMap.get(phone).createdAt.$date.$numberLong)
+        : 0;
+      
+      if (!phoneMap.has(phone) || currentDate > existingDate) {
+        phoneMap.set(phone, order);
+      }
+    });
+    
+    console.log(`Found ${phoneMap.size} unique phone numbers to send SkillSet WhatsApp notifications to`);
+    
+    // Convert Map back to array and prepare for batch processing
+    const uniqueCustomers = Array.from(phoneMap.values());
+    
+    // Process in batches
+    for (let i = 0; i < uniqueCustomers.length; i += WHATSAPP_BATCH_SIZE) {
+      const batch = uniqueCustomers.slice(i, i + WHATSAPP_BATCH_SIZE);
+      console.log(`Processing SkillSet WhatsApp batch ${Math.floor(i/WHATSAPP_BATCH_SIZE) + 1} of ${Math.ceil(uniqueCustomers.length/WHATSAPP_BATCH_SIZE)}`);
+      await processWhatsAppBatchSkillSet(batch);
+      
+      // If we have more batches to process, wait a bit to avoid rate limits
+      if (i + WHATSAPP_BATCH_SIZE < uniqueCustomers.length) {
+        console.log('Waiting 5 seconds before processing next SkillSet WhatsApp batch...');
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      }
+    }
+    
+    console.log('SkillSet WhatsApp notification processing completed successfully');
+    return { success: true, message: 'WhatsApp notifications for SkillSet processed successfully' };
+  } catch (error) {
+    console.error('Error in SkillSet WhatsApp notification process:', error);
+    return { success: false, error: error.message };
+  } finally {
+    // Close the MongoDB connection
+    await skillsetClient.close();
+    console.log('SkillSet MongoDB connection closed after WhatsApp processing');
   }
 }
 
@@ -873,6 +1145,39 @@ app.get('/api/send-whatsapp/30dc', async (req, res) => {
   }
 });
 
+// API endpoint for WhatsApp notifications for SkillSet
+app.get('/api/send-whatsapp/skillset', async (req, res) => {
+  try {
+    console.log('Starting SkillSet WhatsApp notification process via API');
+    const result = await sendWhatsAppNotificationsSkillSet();
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('API Error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// API endpoint to run both email and WhatsApp processes for SkillSet
+app.get('/api/send-all/skillset', async (req, res) => {
+  try {
+    console.log('Starting both email and WhatsApp processes for SkillSet via API');
+    
+    // Run both processes sequentially
+    await skillSetEmailRoute();
+    const whatsappResult = await sendWhatsAppNotificationsSkillSet();
+    
+    res.status(200).json({ 
+      success: true, 
+      message: 'All SkillSet notifications processed successfully',
+      email: { success: true },
+      whatsapp: whatsappResult
+    });
+  } catch (error) {
+    console.error('API Error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // Start the Express server if this file is run directly
 if (require.main === module) {
   // Start the Express server
@@ -900,4 +1205,10 @@ if (require.main === module) {
 }
 
 // Export for testing or importing
-module.exports = { app, main, skillSetEmailRoute, sendWhatsAppNotifications30DC }; 
+module.exports = { 
+  app, 
+  main, 
+  skillSetEmailRoute, 
+  sendWhatsAppNotifications30DC,
+  sendWhatsAppNotificationsSkillSet
+}; 
