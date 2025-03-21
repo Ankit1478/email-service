@@ -557,7 +557,7 @@ app.get('/health', (req, res) => {
 });
 
 // API endpoint for 30 Days Coding emails
-app.post('/api/send-emails/30dc', async (req, res) => {
+app.get('/api/send-emails/30dc', async (req, res) => {
   try {
     console.log('Starting 30 Days Coding email process via API');
     // Run the email sending process
@@ -570,7 +570,7 @@ app.post('/api/send-emails/30dc', async (req, res) => {
 });
 
 // API endpoint for SkillSet emails
-app.post('/api/send-emails/skillset', async (req, res) => {
+app.get('/api/send-emails/skillset', async (req, res) => {
   try {
     console.log('Starting SkillSet email process via API');
     // Run the email sending process
@@ -583,7 +583,7 @@ app.post('/api/send-emails/skillset', async (req, res) => {
 });
 
 // API endpoint to run both email processes
-app.post('/api/send-emails/all', async (req, res) => {
+app.get('/api/send-emails/all', async (req, res) => {
   try {
     console.log('Starting both email processes via API');
     
