@@ -81,6 +81,16 @@ async function fetchPaymentsData(collection) {
 }
 
 function shouldSendEmail(payment) {
+  // Skip if status is "paid"
+  if (payment.status === "paid") {
+    return false;
+  }
+  
+  // Only proceed if status is "created"
+  if (payment.status !== "created") {
+    return false;
+  }
+  
   // Check if sourceUrl contains required patterns
   const sourceUrl = payment.sourceUrl || '';
   
@@ -99,6 +109,9 @@ async function sendPromotionalEmail(customerData) {
   try {
     const { email, name } = customerData.customerDetails;
     const siteUrl = process.env.SITE_URL;
+    
+    // Log payment status
+    console.log(`Sending email to ${email} with payment status: ${customerData.status}`);
     
     // Get course type and other information for personalization
     const courseType = customerData.courseType || 'beginner'; // Default to beginner if not specified
@@ -222,9 +235,25 @@ async function main() {
     const paymentsData = await fetchPaymentsData(collection);
     console.log(`Found ${paymentsData.length} payment records to process`);
     
-    // Filter payments based on sourceUrl criteria
+    // Count by status
+    const statusCounts = {
+      created: 0,
+      paid: 0,
+      other: 0
+    };
+    
+    paymentsData.forEach(payment => {
+      if (payment.status === "created") statusCounts.created++;
+      else if (payment.status === "paid") statusCounts.paid++;
+      else statusCounts.other++;
+    });
+    
+    console.log(`Payment status breakdown - Created: ${statusCounts.created}, Paid: ${statusCounts.paid}, Other: ${statusCounts.other}`);
+    console.log(`Only processing payments with status "created" and ignoring "paid" status`);
+    
+    // Filter payments based on sourceUrl criteria and status
     const eligiblePayments = paymentsData.filter(payment => shouldSendEmail(payment));
-    console.log(`${eligiblePayments.length} payments match the sourceUrl criteria`);
+    console.log(`${eligiblePayments.length} payments match the criteria for sending emails (correct status and course type)`);
     
     // Handle duplicate emails by creating a Map with email as key
     const emailMap = new Map();
@@ -338,6 +367,16 @@ function getCourseTypeFromSourceUrl(sourceUrl) {
 }
 
 function shouldSendSkillSetEmail(order) {
+  // Skip if status is "paid"
+  if (order.status === "paid") {
+    return false;
+  }
+  
+  // Only proceed if status is "created"
+  if (order.status !== "created") {
+    return false;
+  }
+
   // First check if courseType is explicitly specified in the order
   if (order.courseType) {
     return true;
@@ -366,6 +405,9 @@ async function sendSkillSetEmail(orderData) {
   try {
     const { email, name } = orderData.customerDetails;
     const siteUrl = process.env.SKILLSET_URL;
+    
+    // Log payment status
+    console.log(`Sending SkillSet email to ${email} with payment status: ${orderData.status}`);
     
     // Get course type - first try from orderData.courseType, then from sourceUrl
     let courseType = orderData.courseType || '';
@@ -497,9 +539,25 @@ async function skillSetEmailRoute() {
     const ordersData = await fetchSkillSetOrders(collection);
     console.log(`Found ${ordersData.length} SkillSet orders to process`);
     
-    // Filter orders based on criteria
+    // Count by status
+    const statusCounts = {
+      created: 0,
+      paid: 0,
+      other: 0
+    };
+    
+    ordersData.forEach(order => {
+      if (order.status === "created") statusCounts.created++;
+      else if (order.status === "paid") statusCounts.paid++;
+      else statusCounts.other++;
+    });
+    
+    console.log(`Order status breakdown - Created: ${statusCounts.created}, Paid: ${statusCounts.paid}, Other: ${statusCounts.other}`);
+    console.log(`Only processing orders with status "created" and ignoring "paid" status`);
+    
+    // Filter orders based on criteria and status
     const eligibleOrders = ordersData.filter(order => shouldSendSkillSetEmail(order));
-    console.log(`${eligibleOrders.length} orders match the criteria for sending emails`);
+    console.log(`${eligibleOrders.length} orders match the criteria for sending emails (correct status and course type)`);
     
     // Handle duplicate emails by creating a Map with email as key
     const emailMap = new Map();
@@ -560,6 +618,9 @@ async function sendWhatsAppNotification(customerData) {
   try {
     // Extract customer data
     const { name, phone } = customerData.customerDetails;
+    
+    // Log payment status
+    console.log(`Processing WhatsApp notification for ${name} with payment status: ${customerData.status}`);
     
     // If no phone number is available, skip
     if (!phone) {
@@ -672,6 +733,9 @@ async function sendWhatsAppNotificationSkillSet(customerData) {
   try {
     // Extract customer data
     const { name, phone } = customerData.customerDetails;
+    
+    // Log payment status
+    console.log(`Processing SkillSet WhatsApp notification for ${name} with payment status: ${customerData.status}`);
     
     // If no phone number is available, skip
     if (!phone) {
@@ -933,9 +997,25 @@ async function sendWhatsAppNotifications30DC() {
     const paymentsData = await fetchPaymentsData(collection);
     console.log(`Found ${paymentsData.length} payment records to process for WhatsApp`);
     
-    // Filter payments based on sourceUrl criteria (same as email)
+    // Count by status
+    const statusCounts = {
+      created: 0,
+      paid: 0,
+      other: 0
+    };
+    
+    paymentsData.forEach(payment => {
+      if (payment.status === "created") statusCounts.created++;
+      else if (payment.status === "paid") statusCounts.paid++;
+      else statusCounts.other++;
+    });
+    
+    console.log(`Payment status breakdown - Created: ${statusCounts.created}, Paid: ${statusCounts.paid}, Other: ${statusCounts.other}`);
+    console.log(`Only processing payments with status "created" and ignoring "paid" status`);
+    
+    // Filter payments based on sourceUrl criteria and status (same as email)
     const eligiblePayments = paymentsData.filter(payment => shouldSendEmail(payment));
-    console.log(`${eligiblePayments.length} payments match the criteria for WhatsApp notifications`);
+    console.log(`${eligiblePayments.length} payments match the criteria for WhatsApp notifications (correct status and course type)`);
     
     // Handle duplicate customers by creating a Map with phone as key
     const phoneMap = new Map();
@@ -1004,9 +1084,25 @@ async function sendWhatsAppNotificationsSkillSet() {
     const ordersData = await fetchSkillSetOrders(collection);
     console.log(`Found ${ordersData.length} SkillSet orders to process for WhatsApp`);
     
-    // Filter orders based on criteria for SkillSet
+    // Count by status
+    const statusCounts = {
+      created: 0,
+      paid: 0,
+      other: 0
+    };
+    
+    ordersData.forEach(order => {
+      if (order.status === "created") statusCounts.created++;
+      else if (order.status === "paid") statusCounts.paid++;
+      else statusCounts.other++;
+    });
+    
+    console.log(`Order status breakdown - Created: ${statusCounts.created}, Paid: ${statusCounts.paid}, Other: ${statusCounts.other}`);
+    console.log(`Only processing orders with status "created" and ignoring "paid" status`);
+    
+    // Filter orders based on criteria for SkillSet and status
     const eligibleOrders = ordersData.filter(order => shouldSendSkillSetEmail(order));
-    console.log(`${eligibleOrders.length} orders match the criteria for SkillSet WhatsApp notifications`);
+    console.log(`${eligibleOrders.length} orders match the criteria for SkillSet WhatsApp notifications (correct status and course type)`);
     
     // Handle duplicate customers by creating a Map with phone as key
     const phoneMap = new Map();
