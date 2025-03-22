@@ -610,6 +610,110 @@ async function skillSetEmailRoute() {
 }
 
 /**
+ * Check if a record's createdAt timestamp is at least 10 minutes old
+ * @param {Object} record - The database record to check
+ * @returns {Boolean} - True if record is older than 10 minutes, false otherwise
+ */
+function isOlderThanTenMinutes(record) {
+  // Get the createdAt timestamp
+  let createdAtTime;
+  
+  // Handle different datetime formats from MongoDB
+  if (typeof record.createdAt === 'string') {
+    // ISO format string: "2025-03-22T10:47:50.059+00:00"
+    createdAtTime = new Date(record.createdAt);
+  } else if (record.createdAt instanceof Date) {
+    // Date object
+    createdAtTime = record.createdAt;
+  } else if (record.createdAt?.$date) {
+    // MongoDB extended JSON format
+    if (typeof record.createdAt.$date === 'string') {
+      createdAtTime = new Date(record.createdAt.$date);
+    } else if (record.createdAt.$date.$numberLong) {
+      createdAtTime = new Date(Number(record.createdAt.$date.$numberLong));
+    } else {
+      console.log('Unrecognized createdAt format:', record.createdAt);
+      return false; // Unknown format, skip to be safe
+    }
+  } else {
+    console.log('Missing or invalid createdAt field:', record.createdAt);
+    return false; // Missing timestamp, skip to be safe
+  }
+  
+  // Get current time in UTC
+  const currentTime = new Date();
+  
+  // Calculate the difference in milliseconds
+  const differenceMs = currentTime - createdAtTime;
+  
+  // Convert to minutes
+  const differenceMinutes = differenceMs / (1000 * 60);
+  
+  // Check if older than 10 minutes
+  return differenceMinutes >= 10;
+}
+
+// Filter function for WhatsApp notifications with time check specifically for SkillSet
+function shouldSendSkillSetWhatsApp(order) {
+  const debug = false; // Set to true when you need detailed logging
+  const orderId = order.orderId || 'unknown';
+  
+  // First check if status is "created"
+  if (order.status !== "created") {
+    debug && console.log(`Order ${orderId} - Status check failed: ${order.status}`);
+    return false;
+  }
+  
+  // Then check if the record is older than 10 minutes
+  const isOlder = isOlderThanTenMinutes(order);
+  if (!isOlder) {
+    debug && console.log(`Order ${orderId} - Time check failed`);
+    return false;
+  }
+  
+  // Then check for course type without rechecking status
+  // First check if courseType is explicitly specified in the order
+  if (order.courseType) {
+    debug && console.log(`Order ${orderId} - Passed with courseType: ${order.courseType}`);
+    return true;
+  }
+  
+  // Otherwise check the sourceUrl
+  const sourceUrl = order.sourceUrl || '';
+  
+  // Check for query parameter pattern
+  if (sourceUrl.includes('?course=')) {
+    debug && console.log(`Order ${orderId} - Passed with course query param in URL: ${sourceUrl}`);
+    return true;
+  }
+  
+  // Check for path-based course types
+  const hasCourseInPath = sourceUrl.includes('/ai') ||
+         sourceUrl.includes('/data-analyst') ||
+         sourceUrl.includes('/chatgpt') ||
+         sourceUrl.includes('/studyabroad') ||
+         sourceUrl.includes('/linkedin') ||
+         sourceUrl.includes('/ai-apps') ||
+         sourceUrl.includes('/immigrants') ||
+         sourceUrl.includes('/video-editing');
+         
+  debug && console.log(`Order ${orderId} - Path check result: ${hasCourseInPath ? 'passed' : 'failed'} - URL: ${sourceUrl}`);
+  
+  return hasCourseInPath;
+}
+
+// Filter function for WhatsApp notifications with time check
+function shouldSendWhatsAppNotification(record) {
+  // First check if status is "created"
+  if (record.status !== "created") {
+    return false;
+  }
+  
+  // Then check if the record is older than 10 minutes
+  return isOlderThanTenMinutes(record);
+}
+
+/**
  * Sends a WhatsApp notification to the customer using Interakt.ai API
  * @param {Object} customerData - The customer data with contact and course information
  * @returns {Promise} - Response from Interakt.ai API
@@ -986,176 +1090,362 @@ async function processWhatsAppBatchSkillSet(batch) {
 }
 
 /**
- * Main function for WhatsApp notification processing for 30DC
+ * Main function for WhatsApp notification processing for both platforms with time check
  */
-async function sendWhatsAppNotifications30DC() {
+async function sendWhatsAppNotificationsBoth() {
   try {
-    // Connect to MongoDB
-    const collection = await connectToMongoDB();
+    console.log('Starting WhatsApp notification process for both 30DC and SkillSet with 10-minute delay check');
     
-    // Fetch payments data
-    const paymentsData = await fetchPaymentsData(collection);
-    console.log(`Found ${paymentsData.length} payment records to process for WhatsApp`);
+    // Results object
+    const results = {
+      thirtyDC: {
+        total: 0,
+        eligible: 0,
+        tooRecent: 0,
+        sent: 0
+      },
+      skillSet: {
+        total: 0,
+        eligible: 0,
+        tooRecent: 0,
+        sent: 0
+      }
+    };
     
-    // Count by status
-    const statusCounts = {
+    // Process 30DC first
+    console.log('Processing 30DC WhatsApp notifications...');
+    const dcCollection = await connectToMongoDB();
+    const dcPayments = await fetchPaymentsData(dcCollection);
+    results.thirtyDC.total = dcPayments.length;
+    
+    // Count by status and time
+    let dcStatusCounts = {
       created: 0,
       paid: 0,
       other: 0
     };
     
-    paymentsData.forEach(payment => {
-      if (payment.status === "created") statusCounts.created++;
-      else if (payment.status === "paid") statusCounts.paid++;
-      else statusCounts.other++;
-    });
+    let dcTimeCheckCounts = {
+      olderThan10Min: 0,
+      newerThan10Min: 0
+    };
     
-    console.log(`Payment status breakdown - Created: ${statusCounts.created}, Paid: ${statusCounts.paid}, Other: ${statusCounts.other}`);
-    console.log(`Only processing payments with status "created" and ignoring "paid" status`);
-    
-    // Filter payments based on sourceUrl criteria and status (same as email)
-    const eligiblePayments = paymentsData.filter(payment => shouldSendEmail(payment));
-    console.log(`${eligiblePayments.length} payments match the criteria for WhatsApp notifications (correct status and course type)`);
-    
-    // Handle duplicate customers by creating a Map with phone as key
-    const phoneMap = new Map();
-    
-    // Process each payment record, keeping only the most recent for each phone number
-    eligiblePayments.forEach(payment => {
-      const phone = payment.customerDetails?.phone;
-      
-      // Skip if no phone number
-      if (!phone) return;
-      
-      // Get timestamp from MongoDB date format
-      const currentDate = payment.createdAt?.$date?.$numberLong 
-        ? Number(payment.createdAt.$date.$numberLong) 
-        : new Date().getTime();
-      
-      // Compare with existing entry
-      const existingDate = phoneMap.get(phone)?.createdAt?.$date?.$numberLong
-        ? Number(phoneMap.get(phone).createdAt.$date.$numberLong)
-        : 0;
-      
-      if (!phoneMap.has(phone) || currentDate > existingDate) {
-        phoneMap.set(phone, payment);
+    dcPayments.forEach(payment => {
+      if (payment.status === "created") {
+        dcStatusCounts.created++;
+        if (isOlderThanTenMinutes(payment)) {
+          dcTimeCheckCounts.olderThan10Min++;
+        } else {
+          dcTimeCheckCounts.newerThan10Min++;
+        }
+      } else if (payment.status === "paid") {
+        dcStatusCounts.paid++;
+      } else {
+        dcStatusCounts.other++;
       }
     });
     
-    console.log(`Found ${phoneMap.size} unique phone numbers to send WhatsApp notifications to`);
+    console.log(`30DC payment status breakdown - Created: ${dcStatusCounts.created}, Paid: ${dcStatusCounts.paid}, Other: ${dcStatusCounts.other}`);
+    console.log(`30DC time check breakdown - Older than 10 minutes: ${dcTimeCheckCounts.olderThan10Min}, Newer than 10 minutes: ${dcTimeCheckCounts.newerThan10Min}`);
     
-    // Convert Map back to array and prepare for batch processing
-    const uniqueCustomers = Array.from(phoneMap.values());
+    // Apply both filters: correct status and time check
+    const dc30EligiblePayments = dcPayments.filter(payment => {
+      // Check status
+      if (payment.status !== "created") {
+        return false;
+      }
+      
+      // Check time
+      const isOlderThan10Min = isOlderThanTenMinutes(payment);
+      if (!isOlderThan10Min) {
+        results.thirtyDC.tooRecent++;
+        return false;
+      }
+      
+      // Also check source URL criteria
+      const sourceUrl = payment.sourceUrl || '';
+      if (sourceUrl.includes('?course=')) {
+        const courseParam = sourceUrl.split('?course=')[1];
+        return courseParam === 'beginner' || courseParam === 'advanced';
+      }
+      return sourceUrl.includes('/beginner') || sourceUrl.includes('/advanced');
+    });
+    
+    results.thirtyDC.eligible = dc30EligiblePayments.length;
+    console.log(`Found ${dc30EligiblePayments.length} eligible 30DC payments for WhatsApp (status "created", older than 10 minutes)`);
+    
+    // Handle duplicate customers for 30DC
+    const dc30PhoneMap = new Map();
+    dc30EligiblePayments.forEach(payment => {
+      const phone = payment.customerDetails?.phone;
+      if (!phone) return;
+      
+      const currentDate = payment.createdAt?.$date?.$numberLong 
+        ? Number(payment.createdAt.$date.$numberLong) 
+        : new Date(payment.createdAt).getTime();
+      
+      const existingDate = dc30PhoneMap.get(phone)?.createdAt?.$date?.$numberLong
+        ? Number(dc30PhoneMap.get(phone).createdAt.$date.$numberLong)
+        : dc30PhoneMap.get(phone)?.createdAt 
+          ? new Date(dc30PhoneMap.get(phone).createdAt).getTime()
+          : 0;
+      
+      if (!dc30PhoneMap.has(phone) || currentDate > existingDate) {
+        dc30PhoneMap.set(phone, payment);
+      }
+    });
+    
+    const dc30UniqueCustomers = Array.from(dc30PhoneMap.values());
+    console.log(`Found ${dc30UniqueCustomers.length} unique 30DC phone numbers to send WhatsApp notifications to`);
     
     // Process in batches
-    for (let i = 0; i < uniqueCustomers.length; i += WHATSAPP_BATCH_SIZE) {
-      const batch = uniqueCustomers.slice(i, i + WHATSAPP_BATCH_SIZE);
-      console.log(`Processing WhatsApp batch ${Math.floor(i/WHATSAPP_BATCH_SIZE) + 1} of ${Math.ceil(uniqueCustomers.length/WHATSAPP_BATCH_SIZE)}`);
-      await processWhatsAppBatch(batch);
+    for (let i = 0; i < dc30UniqueCustomers.length; i += WHATSAPP_BATCH_SIZE) {
+      const batch = dc30UniqueCustomers.slice(i, i + WHATSAPP_BATCH_SIZE);
+      console.log(`Processing 30DC WhatsApp batch ${Math.floor(i/WHATSAPP_BATCH_SIZE) + 1} of ${Math.ceil(dc30UniqueCustomers.length/WHATSAPP_BATCH_SIZE)}`);
+      const batchResults = await processWhatsAppBatch(batch);
+      results.thirtyDC.sent += batchResults.successful.length;
       
-      // If we have more batches to process, wait a bit to avoid rate limits
-      if (i + WHATSAPP_BATCH_SIZE < uniqueCustomers.length) {
-        console.log('Waiting 5 seconds before processing next WhatsApp batch...');
+      if (i + WHATSAPP_BATCH_SIZE < dc30UniqueCustomers.length) {
+        console.log('Waiting 5 seconds before processing next 30DC WhatsApp batch...');
         await new Promise(resolve => setTimeout(resolve, 5000));
       }
     }
     
-    console.log('WhatsApp notification processing completed successfully');
-    return { success: true, message: 'WhatsApp notifications for 30DC processed successfully' };
-  } catch (error) {
-    console.error('Error in WhatsApp notification process:', error);
-    return { success: false, error: error.message };
-  } finally {
-    // Close the MongoDB connection
+    // Close the 30DC MongoDB connection
     await client.close();
-    console.log('MongoDB connection closed after WhatsApp processing');
-  }
-}
-
-/**
- * Main function for WhatsApp notification processing for SkillSet
- */
-async function sendWhatsAppNotificationsSkillSet() {
-  try {
-    // Connect to MongoDB
-    const collection = await connectToSkillSetMongoDB();
+    console.log('30DC MongoDB connection closed after WhatsApp processing');
     
-    // Fetch orders data
-    const ordersData = await fetchSkillSetOrders(collection);
-    console.log(`Found ${ordersData.length} SkillSet orders to process for WhatsApp`);
+    // Process SkillSet next
+    console.log('Processing SkillSet WhatsApp notifications...');
+    const skillsetCollection = await connectToSkillSetMongoDB();
+    const skillsetOrders = await fetchSkillSetOrders(skillsetCollection);
+    results.skillSet.total = skillsetOrders.length;
     
-    // Count by status
-    const statusCounts = {
+    // Count by status and time for skillset
+    let skillsetStatusCounts = {
       created: 0,
       paid: 0,
       other: 0
     };
     
-    ordersData.forEach(order => {
-      if (order.status === "created") statusCounts.created++;
-      else if (order.status === "paid") statusCounts.paid++;
-      else statusCounts.other++;
-    });
+    let skillsetTimeCheckCounts = {
+      olderThan10Min: 0,
+      newerThan10Min: 0
+    };
     
-    console.log(`Order status breakdown - Created: ${statusCounts.created}, Paid: ${statusCounts.paid}, Other: ${statusCounts.other}`);
-    console.log(`Only processing orders with status "created" and ignoring "paid" status`);
-    
-    // Filter orders based on criteria for SkillSet and status
-    const eligibleOrders = ordersData.filter(order => shouldSendSkillSetEmail(order));
-    console.log(`${eligibleOrders.length} orders match the criteria for SkillSet WhatsApp notifications (correct status and course type)`);
-    
-    // Handle duplicate customers by creating a Map with phone as key
-    const phoneMap = new Map();
-    
-    // Process each order record, keeping only the most recent for each phone number
-    eligibleOrders.forEach(order => {
-      const phone = order.customerDetails?.phone;
-      
-      // Skip if no phone number
-      if (!phone) return;
-      
-      // Get timestamp from MongoDB date format
-      const currentDate = order.createdAt?.$date?.$numberLong 
-        ? Number(order.createdAt.$date.$numberLong) 
-        : new Date().getTime();
-      
-      // Compare with existing entry
-      const existingDate = phoneMap.get(phone)?.createdAt?.$date?.$numberLong
-        ? Number(phoneMap.get(phone).createdAt.$date.$numberLong)
-        : 0;
-      
-      if (!phoneMap.has(phone) || currentDate > existingDate) {
-        phoneMap.set(phone, order);
+    skillsetOrders.forEach(order => {
+      if (order.status === "created") {
+        skillsetStatusCounts.created++;
+        if (isOlderThanTenMinutes(order)) {
+          skillsetTimeCheckCounts.olderThan10Min++;
+        } else {
+          skillsetTimeCheckCounts.newerThan10Min++;
+        }
+      } else if (order.status === "paid") {
+        skillsetStatusCounts.paid++;
+      } else {
+        skillsetStatusCounts.other++;
       }
     });
     
-    console.log(`Found ${phoneMap.size} unique phone numbers to send SkillSet WhatsApp notifications to`);
+    console.log(`SkillSet order status breakdown - Created: ${skillsetStatusCounts.created}, Paid: ${skillsetStatusCounts.paid}, Other: ${skillsetStatusCounts.other}`);
+    console.log(`SkillSet time check breakdown - Older than 10 minutes: ${skillsetTimeCheckCounts.olderThan10Min}, Newer than 10 minutes: ${skillsetTimeCheckCounts.newerThan10Min}`);
     
-    // Convert Map back to array and prepare for batch processing
-    const uniqueCustomers = Array.from(phoneMap.values());
+    // Log a sample of created orders to debug
+    const createdOrders = skillsetOrders.filter(order => order.status === "created");
+    if (createdOrders.length > 0) {
+      console.log(`Sample of SkillSet order with "created" status:`, {
+        orderId: createdOrders[0].orderId || 'N/A',
+        status: createdOrders[0].status,
+        courseType: createdOrders[0].courseType || 'N/A',
+        sourceUrl: createdOrders[0].sourceUrl || 'N/A',
+        createdAt: createdOrders[0].createdAt || 'N/A'
+      });
+      
+      // Check the time difference for this order
+      const sampleOrder = createdOrders[0];
+      let createdAtTime;
+      
+      if (typeof sampleOrder.createdAt === 'string') {
+        createdAtTime = new Date(sampleOrder.createdAt);
+      } else if (sampleOrder.createdAt instanceof Date) {
+        createdAtTime = sampleOrder.createdAt;
+      } else if (sampleOrder.createdAt?.$date) {
+        if (typeof sampleOrder.createdAt.$date === 'string') {
+          createdAtTime = new Date(sampleOrder.createdAt.$date);
+        } else if (sampleOrder.createdAt.$date.$numberLong) {
+          createdAtTime = new Date(Number(sampleOrder.createdAt.$date.$numberLong));
+        }
+      }
+      
+      if (createdAtTime) {
+        const currentTime = new Date();
+        const differenceMs = currentTime - createdAtTime;
+        const differenceMinutes = differenceMs / (1000 * 60);
+        console.log(`Sample order creation time: ${createdAtTime.toISOString()}`);
+        console.log(`Current time: ${currentTime.toISOString()}`);
+        console.log(`Time difference: ${differenceMinutes.toFixed(2)} minutes`);
+      }
+    }
+    
+    // Apply both filters: correct status and time check for SkillSet
+    let statusFilterCount = 0;
+    let timeFilterCount = 0;
+    let courseTypeFilterCount = 0;
+    
+    const skillsetEligibleOrders = skillsetOrders.filter(order => {
+      // Use the specialized SkillSet WhatsApp eligibility function
+      const isEligible = shouldSendSkillSetWhatsApp(order);
+      
+      // Count for debugging
+      if (order.status === "created") {
+        statusFilterCount++;
+        
+        if (isOlderThanTenMinutes(order)) {
+          timeFilterCount++;
+          
+          // Check course type
+          const hasCourseType = order.courseType || false;
+          const sourceUrl = order.sourceUrl || '';
+          const hasQueryCourse = sourceUrl.includes('?course=');
+          const hasPathCourse = sourceUrl.includes('/ai') ||
+                             sourceUrl.includes('/data-analyst') ||
+                             sourceUrl.includes('/chatgpt') ||
+                             sourceUrl.includes('/studyabroad') ||
+                             sourceUrl.includes('/linkedin') ||
+                             sourceUrl.includes('/ai-apps') ||
+                             sourceUrl.includes('/immigrants') ||
+                             sourceUrl.includes('/video-editing');
+          
+          if (hasCourseType || hasQueryCourse || hasPathCourse) {
+            courseTypeFilterCount++;
+          }
+        } else {
+          results.skillSet.tooRecent++;
+        }
+      }
+      
+      return isEligible;
+    });
+    
+    console.log(`SkillSet filtering details - Passed status check: ${statusFilterCount}, Passed time check: ${timeFilterCount}, Passed course type check: ${courseTypeFilterCount}`);
+    
+    results.skillSet.eligible = skillsetEligibleOrders.length;
+    console.log(`Found ${skillsetEligibleOrders.length} eligible SkillSet orders for WhatsApp (status "created", older than 10 minutes)`);
+    
+    // Handle duplicate customers for SkillSet
+    const skillsetPhoneMap = new Map();
+    skillsetEligibleOrders.forEach(order => {
+      const phone = order.customerDetails?.phone;
+      if (!phone) return;
+      
+      const currentDate = order.createdAt?.$date?.$numberLong 
+        ? Number(order.createdAt.$date.$numberLong) 
+        : new Date(order.createdAt).getTime();
+      
+      const existingDate = skillsetPhoneMap.get(phone)?.createdAt?.$date?.$numberLong
+        ? Number(skillsetPhoneMap.get(phone).createdAt.$date.$numberLong)
+        : skillsetPhoneMap.get(phone)?.createdAt 
+          ? new Date(skillsetPhoneMap.get(phone).createdAt).getTime()
+          : 0;
+      
+      if (!skillsetPhoneMap.has(phone) || currentDate > existingDate) {
+        skillsetPhoneMap.set(phone, order);
+      }
+    });
+    
+    const skillsetUniqueCustomers = Array.from(skillsetPhoneMap.values());
+    console.log(`Found ${skillsetUniqueCustomers.length} unique SkillSet phone numbers to send WhatsApp notifications to`);
     
     // Process in batches
-    for (let i = 0; i < uniqueCustomers.length; i += WHATSAPP_BATCH_SIZE) {
-      const batch = uniqueCustomers.slice(i, i + WHATSAPP_BATCH_SIZE);
-      console.log(`Processing SkillSet WhatsApp batch ${Math.floor(i/WHATSAPP_BATCH_SIZE) + 1} of ${Math.ceil(uniqueCustomers.length/WHATSAPP_BATCH_SIZE)}`);
-      await processWhatsAppBatchSkillSet(batch);
+    for (let i = 0; i < skillsetUniqueCustomers.length; i += WHATSAPP_BATCH_SIZE) {
+      const batch = skillsetUniqueCustomers.slice(i, i + WHATSAPP_BATCH_SIZE);
+      console.log(`Processing SkillSet WhatsApp batch ${Math.floor(i/WHATSAPP_BATCH_SIZE) + 1} of ${Math.ceil(skillsetUniqueCustomers.length/WHATSAPP_BATCH_SIZE)}`);
+      const batchResults = await processWhatsAppBatchSkillSet(batch);
+      results.skillSet.sent += batchResults.successful.length;
       
-      // If we have more batches to process, wait a bit to avoid rate limits
-      if (i + WHATSAPP_BATCH_SIZE < uniqueCustomers.length) {
+      if (i + WHATSAPP_BATCH_SIZE < skillsetUniqueCustomers.length) {
         console.log('Waiting 5 seconds before processing next SkillSet WhatsApp batch...');
         await new Promise(resolve => setTimeout(resolve, 5000));
       }
     }
     
-    console.log('SkillSet WhatsApp notification processing completed successfully');
-    return { success: true, message: 'WhatsApp notifications for SkillSet processed successfully' };
-  } catch (error) {
-    console.error('Error in SkillSet WhatsApp notification process:', error);
-    return { success: false, error: error.message };
-  } finally {
-    // Close the MongoDB connection
+    // Close the SkillSet MongoDB connection
     await skillsetClient.close();
     console.log('SkillSet MongoDB connection closed after WhatsApp processing');
+    
+    // Return comprehensive results
+    console.log('Combined WhatsApp notification processing completed successfully');
+    return { 
+      success: true, 
+      message: 'WhatsApp notifications for both 30DC and SkillSet processed successfully',
+      thirtyDC: {
+        total: results.thirtyDC.total,
+        eligible: results.thirtyDC.eligible,
+        tooRecent: results.thirtyDC.tooRecent,
+        sent: results.thirtyDC.sent
+      },
+      skillSet: {
+        total: results.skillSet.total,
+        eligible: results.skillSet.eligible,
+        tooRecent: results.skillSet.tooRecent,
+        sent: results.skillSet.sent
+      }
+    };
+    
+  } catch (error) {
+    console.error('Error in combined WhatsApp notification process:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Main function for WhatsApp notification processing for 30DC
+ * Wrapper for backward compatibility
+ */
+async function sendWhatsAppNotifications30DC() {
+  try {
+    console.log('Starting 30DC WhatsApp notification process via compatibility wrapper');
+    
+    // Call the combined function
+    const result = await sendWhatsAppNotificationsBoth();
+    
+    // Extract just the 30DC results for compatibility
+    return { 
+      success: result.success, 
+      message: 'WhatsApp notifications for 30DC processed successfully',
+      total: result.thirtyDC.total,
+      eligible: result.thirtyDC.eligible,
+      sent: result.thirtyDC.sent
+    };
+  } catch (error) {
+    console.error('Error in 30DC WhatsApp notification wrapper:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Main function for WhatsApp notification processing for SkillSet
+ * Wrapper for backward compatibility
+ */
+async function sendWhatsAppNotificationsSkillSet() {
+  try {
+    console.log('Starting SkillSet WhatsApp notification process via compatibility wrapper');
+    
+    // Call the combined function
+    const result = await sendWhatsAppNotificationsBoth();
+    
+    // Extract just the SkillSet results for compatibility
+    return { 
+      success: result.success, 
+      message: 'WhatsApp notifications for SkillSet processed successfully',
+      total: result.skillSet.total,
+      eligible: result.skillSet.eligible,
+      sent: result.skillSet.sent
+    };
+  } catch (error) {
+    console.error('Error in SkillSet WhatsApp notification wrapper:', error);
+    return { success: false, error: error.message };
   }
 }
 
@@ -1274,6 +1564,18 @@ app.get('/api/send-all/skillset', async (req, res) => {
   }
 });
 
+// API endpoint for WhatsApp notifications for both platforms with time check
+app.get('/whatsapp-notifi/bothskillsettand30dc', async (req, res) => {
+  try {
+    console.log('Starting combined WhatsApp notification process with 10-minute delay check via API');
+    const result = await sendWhatsAppNotificationsBoth();
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('API Error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // Start the Express server if this file is run directly
 if (require.main === module) {
   // Start the Express server
@@ -1306,5 +1608,6 @@ module.exports = {
   main, 
   skillSetEmailRoute, 
   sendWhatsAppNotifications30DC,
-  sendWhatsAppNotificationsSkillSet
+  sendWhatsAppNotificationsSkillSet,
+  sendWhatsAppNotificationsBoth
 }; 
