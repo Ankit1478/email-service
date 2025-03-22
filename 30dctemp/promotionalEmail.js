@@ -1,4 +1,4 @@
-const promotionalEmail = (name, siteUrl, courseType = 'beginner', priceData = {}) => {
+const promotionalEmail = (name, siteUrl, courseType = 'beginner', priceData = {}, checkoutUrlFromDb = null) => {
   // Customize the messaging based on course type
   let courseTypeMessage = '';
   let courseDetails = '';
@@ -49,7 +49,8 @@ const promotionalEmail = (name, siteUrl, courseType = 'beginner', priceData = {}
           </div>
         </div>
       </div>`;
-      checkoutUrl = `${siteUrl}/checkout?course=beginner`;
+      // Use the database URL if provided, otherwise fallback to constructed URL
+      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/checkout?course=beginner`;
       break;
   
     case 'advanced':
@@ -91,11 +92,13 @@ const promotionalEmail = (name, siteUrl, courseType = 'beginner', priceData = {}
           </div>
         </div>
       </div>`;
-      checkoutUrl = `${siteUrl}/checkout?course=advanced`;
+      // Use the database URL if provided, otherwise fallback to constructed URL
+      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/checkout?course=advanced`;
       break;
     default:
       courseTypeMessage = 'Transform Your Career with Premium Tech Courses';
-      checkoutUrl = `${siteUrl}/checkout`;
+      // Use the database URL if provided, otherwise fallback to constructed URL
+      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/checkout`;
   }
   
   // Only proceed if we have a valid course type

@@ -455,8 +455,11 @@ async function sendSkillSetEmail(orderData) {
       savings: formatPrice(savings)
     };
     
-    // Generate email content with dynamic price data
-    const emailContent = skillsetEmail(name, siteUrl, courseType, priceData);
+    // Get the source URL to use as the direct checkout URL
+    const checkoutUrlFromDb = orderData.sourceUrl || null;
+    
+    // Generate email content with dynamic price data and direct checkout URL
+    const emailContent = skillsetEmail(name, siteUrl, courseType, priceData, checkoutUrlFromDb);
     
     
     

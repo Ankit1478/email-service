@@ -1,4 +1,4 @@
-const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}) => {
+const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}, checkoutUrlFromDb = null) => {
   // Customize the messaging based on course type
   let courseTypeMessage = '';
   let courseDetails = '';
@@ -46,7 +46,7 @@ const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}) => {
           </div>
         </div>
       </div>`;
-      checkoutUrl = `${siteUrl}/ai`;
+      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/ai`;
       break;
     
     case 'data-analyst':
@@ -83,7 +83,7 @@ const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}) => {
           </div>
         </div>
       </div>`;
-      checkoutUrl = `${siteUrl}/data-analyst`;
+      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/data-analyst`;
       break;
     
     case 'chatgpt':
@@ -120,7 +120,7 @@ const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}) => {
           </div>
         </div>
       </div>`;
-      checkoutUrl = `${siteUrl}/chatgpt`;
+      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/chatgpt`;
       break;
       
     case 'studyabroad':
@@ -157,7 +157,7 @@ const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}) => {
           </div>
         </div>
       </div>`;
-      checkoutUrl = `${siteUrl}/studyabroad`;
+      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/studyabroad`;
       break;
       
     case 'linkedin':
@@ -194,7 +194,7 @@ const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}) => {
           </div>
         </div>
       </div>`;
-      checkoutUrl = `${siteUrl}/linkedin`;
+      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/linkedin`;
       break;
       
     case 'ai-apps':
@@ -231,7 +231,7 @@ const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}) => {
           </div>
         </div>
       </div>`;
-      checkoutUrl = `${siteUrl}/ai-apps`;
+      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/ai-apps`;
       break;
       
     case 'immigrants':
@@ -268,7 +268,7 @@ const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}) => {
           </div>
         </div>
       </div>`;
-      checkoutUrl = `${siteUrl}/immigrants`;
+      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/immigrants`;
       break;
       
     case 'video-editing':
@@ -305,7 +305,7 @@ const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}) => {
           </div>
         </div>
       </div>`;
-      checkoutUrl = `${siteUrl}/video-editing`;
+      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/video-editing`;
       break;
       
     default:
@@ -328,7 +328,7 @@ const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}) => {
           </div>
         </div>
       </div>`;
-      checkoutUrl = `${siteUrl}`;
+      checkoutUrl = checkoutUrlFromDb || `${siteUrl}`;
   }
   
   return `<!DOCTYPE html>
