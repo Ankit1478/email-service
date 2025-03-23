@@ -1452,6 +1452,321 @@ async function sendWhatsAppNotificationsSkillSet() {
   }
 }
 
+/**
+ * Check if a record's createdAt timestamp is less than 15 minutes old
+ * @param {Object} record - The database record to check
+ * @returns {Boolean} - True if record is newer than 15 minutes, false otherwise
+ */
+function isNewerThanFifteenMinutes(record) {
+  // Get the createdAt timestamp
+  let createdAtTime;
+  
+  // Handle different datetime formats from MongoDB
+  if (typeof record.createdAt === 'string') {
+    // ISO format string: "2025-03-22T10:47:50.059+00:00"
+    createdAtTime = new Date(record.createdAt);
+  } else if (record.createdAt instanceof Date) {
+    // Date object
+    createdAtTime = record.createdAt;
+  } else if (record.createdAt?.$date) {
+    // MongoDB extended JSON format
+    if (typeof record.createdAt.$date === 'string') {
+      createdAtTime = new Date(record.createdAt.$date);
+    } else if (record.createdAt.$date.$numberLong) {
+      createdAtTime = new Date(Number(record.createdAt.$date.$numberLong));
+    } else {
+      console.log('Unrecognized createdAt format:', record.createdAt);
+      return false; // Unknown format, skip to be safe
+    }
+  } else {
+    console.log('Missing or invalid createdAt field:', record.createdAt);
+    return false; // Missing timestamp, skip to be safe
+  }
+  
+  // Get current time in UTC
+  const currentTime = new Date();
+  
+  // Calculate the difference in milliseconds
+  const differenceMs = currentTime - createdAtTime;
+  
+  // Convert to minutes
+  const differenceMinutes = differenceMs / (1000 * 60);
+  
+  // Check if newer than 15 minutes
+  return differenceMinutes < 15;
+}
+
+/**
+ * Main function for quick WhatsApp notification processing for both platforms
+ * Only sends to users with orders less than 15 minutes old
+ */
+async function sendQuickWhatsAppNotificationsBoth() {
+  try {
+    console.log('Starting quick WhatsApp notification process for both 30DC and SkillSet (less than 15 minutes old)');
+    
+    // Results object
+    const results = {
+      thirtyDC: {
+        total: 0,
+        eligible: 0,
+        tooOld: 0,
+        sent: 0
+      },
+      skillSet: {
+        total: 0,
+        eligible: 0,
+        tooOld: 0,
+        sent: 0
+      }
+    };
+    
+    // Process 30DC first
+    console.log('Processing 30DC quick WhatsApp notifications...');
+    const dcCollection = await connectToMongoDB();
+    const dcPayments = await fetchPaymentsData(dcCollection);
+    results.thirtyDC.total = dcPayments.length;
+    
+    // Count by status and time
+    let dcStatusCounts = {
+      created: 0,
+      paid: 0,
+      other: 0
+    };
+    
+    let dcTimeCheckCounts = {
+      newerThan15Min: 0,
+      olderThan15Min: 0
+    };
+    
+    dcPayments.forEach(payment => {
+      if (payment.status === "created") {
+        dcStatusCounts.created++;
+        if (isNewerThanFifteenMinutes(payment)) {
+          dcTimeCheckCounts.newerThan15Min++;
+        } else {
+          dcTimeCheckCounts.olderThan15Min++;
+        }
+      } else if (payment.status === "paid") {
+        dcStatusCounts.paid++;
+      } else {
+        dcStatusCounts.other++;
+      }
+    });
+    
+    console.log(`30DC payment status breakdown - Created: ${dcStatusCounts.created}, Paid: ${dcStatusCounts.paid}, Other: ${dcStatusCounts.other}`);
+    console.log(`30DC time check breakdown - Newer than 15 minutes: ${dcTimeCheckCounts.newerThan15Min}, Older than 15 minutes: ${dcTimeCheckCounts.olderThan15Min}`);
+    
+    // Apply both filters: correct status and time check
+    const dc30EligiblePayments = dcPayments.filter(payment => {
+      // Check status
+      if (payment.status !== "created") {
+        return false;
+      }
+      
+      // Check time
+      const isNewerThan15Min = isNewerThanFifteenMinutes(payment);
+      if (!isNewerThan15Min) {
+        results.thirtyDC.tooOld++;
+        return false;
+      }
+      
+      // Also check source URL criteria
+      const sourceUrl = payment.sourceUrl || '';
+      if (sourceUrl.includes('?course=')) {
+        const courseParam = sourceUrl.split('?course=')[1];
+        return courseParam === 'beginner' || courseParam === 'advanced';
+      }
+      return sourceUrl.includes('/beginner') || sourceUrl.includes('/advanced');
+    });
+    
+    results.thirtyDC.eligible = dc30EligiblePayments.length;
+    console.log(`Found ${dc30EligiblePayments.length} eligible 30DC payments for quick WhatsApp (status "created", newer than 15 minutes)`);
+    
+    // Handle duplicate customers for 30DC
+    const dc30PhoneMap = new Map();
+    dc30EligiblePayments.forEach(payment => {
+      const phone = payment.customerDetails?.phone;
+      if (!phone) return;
+      
+      const currentDate = payment.createdAt?.$date?.$numberLong 
+        ? Number(payment.createdAt.$date.$numberLong) 
+        : new Date(payment.createdAt).getTime();
+      
+      const existingDate = dc30PhoneMap.get(phone)?.createdAt?.$date?.$numberLong
+        ? Number(dc30PhoneMap.get(phone).createdAt.$date.$numberLong)
+        : dc30PhoneMap.get(phone)?.createdAt 
+          ? new Date(dc30PhoneMap.get(phone).createdAt).getTime()
+          : 0;
+      
+      if (!dc30PhoneMap.has(phone) || currentDate > existingDate) {
+        dc30PhoneMap.set(phone, payment);
+      }
+    });
+    
+    const dc30UniqueCustomers = Array.from(dc30PhoneMap.values());
+    console.log(`Found ${dc30UniqueCustomers.length} unique 30DC phone numbers to send quick WhatsApp notifications to`);
+    
+    // Process in batches
+    for (let i = 0; i < dc30UniqueCustomers.length; i += WHATSAPP_BATCH_SIZE) {
+      const batch = dc30UniqueCustomers.slice(i, i + WHATSAPP_BATCH_SIZE);
+      console.log(`Processing 30DC quick WhatsApp batch ${Math.floor(i/WHATSAPP_BATCH_SIZE) + 1} of ${Math.ceil(dc30UniqueCustomers.length/WHATSAPP_BATCH_SIZE)}`);
+      const batchResults = await processWhatsAppBatch(batch);
+      results.thirtyDC.sent += batchResults.successful.length;
+      
+      if (i + WHATSAPP_BATCH_SIZE < dc30UniqueCustomers.length) {
+        console.log('Waiting 3 seconds before processing next 30DC quick WhatsApp batch...');
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+    }
+    
+    // Close the 30DC MongoDB connection
+    await client.close();
+    console.log('30DC MongoDB connection closed after quick WhatsApp processing');
+    
+    // Process SkillSet next
+    console.log('Processing SkillSet quick WhatsApp notifications...');
+    const skillsetCollection = await connectToSkillSetMongoDB();
+    const skillsetOrders = await fetchSkillSetOrders(skillsetCollection);
+    results.skillSet.total = skillsetOrders.length;
+    
+    // Count by status and time for skillset
+    let skillsetStatusCounts = {
+      created: 0,
+      paid: 0,
+      other: 0
+    };
+    
+    let skillsetTimeCheckCounts = {
+      newerThan15Min: 0,
+      olderThan15Min: 0
+    };
+    
+    skillsetOrders.forEach(order => {
+      if (order.status === "created") {
+        skillsetStatusCounts.created++;
+        if (isNewerThanFifteenMinutes(order)) {
+          skillsetTimeCheckCounts.newerThan15Min++;
+        } else {
+          skillsetTimeCheckCounts.olderThan15Min++;
+        }
+      } else if (order.status === "paid") {
+        skillsetStatusCounts.paid++;
+      } else {
+        skillsetStatusCounts.other++;
+      }
+    });
+    
+    console.log(`SkillSet order status breakdown - Created: ${skillsetStatusCounts.created}, Paid: ${skillsetStatusCounts.paid}, Other: ${skillsetStatusCounts.other}`);
+    console.log(`SkillSet time check breakdown - Newer than 15 minutes: ${skillsetTimeCheckCounts.newerThan15Min}, Older than 15 minutes: ${skillsetTimeCheckCounts.olderThan15Min}`);
+    
+    // Filter for quick SkillSet notifications
+    const skillsetEligibleOrders = skillsetOrders.filter(order => {
+      // Check status
+      if (order.status !== "created") {
+        return false;
+      }
+      
+      // Check time
+      const isNewerThan15Min = isNewerThanFifteenMinutes(order);
+      if (!isNewerThan15Min) {
+        results.skillSet.tooOld++;
+        return false;
+      }
+      
+      // Check course type without rechecking status
+      // First check if courseType is explicitly specified in the order
+      if (order.courseType) {
+        return true;
+      }
+      
+      // Otherwise check the sourceUrl
+      const sourceUrl = order.sourceUrl || '';
+      
+      // Check for query parameter pattern
+      if (sourceUrl.includes('?course=')) {
+        return true;
+      }
+      
+      // Check for path-based course types
+      return sourceUrl.includes('/ai') ||
+             sourceUrl.includes('/data-analyst') ||
+             sourceUrl.includes('/chatgpt') ||
+             sourceUrl.includes('/studyabroad') ||
+             sourceUrl.includes('/linkedin') ||
+             sourceUrl.includes('/ai-apps') ||
+             sourceUrl.includes('/immigrants') ||
+             sourceUrl.includes('/video-editing');
+    });
+    
+    results.skillSet.eligible = skillsetEligibleOrders.length;
+    console.log(`Found ${skillsetEligibleOrders.length} eligible SkillSet orders for quick WhatsApp (status "created", newer than 15 minutes)`);
+    
+    // Handle duplicate customers for SkillSet
+    const skillsetPhoneMap = new Map();
+    skillsetEligibleOrders.forEach(order => {
+      const phone = order.customerDetails?.phone;
+      if (!phone) return;
+      
+      const currentDate = order.createdAt?.$date?.$numberLong 
+        ? Number(order.createdAt.$date.$numberLong) 
+        : new Date(order.createdAt).getTime();
+      
+      const existingDate = skillsetPhoneMap.get(phone)?.createdAt?.$date?.$numberLong
+        ? Number(skillsetPhoneMap.get(phone).createdAt.$date.$numberLong)
+        : skillsetPhoneMap.get(phone)?.createdAt 
+          ? new Date(skillsetPhoneMap.get(phone).createdAt).getTime()
+          : 0;
+      
+      if (!skillsetPhoneMap.has(phone) || currentDate > existingDate) {
+        skillsetPhoneMap.set(phone, order);
+      }
+    });
+    
+    const skillsetUniqueCustomers = Array.from(skillsetPhoneMap.values());
+    console.log(`Found ${skillsetUniqueCustomers.length} unique SkillSet phone numbers to send quick WhatsApp notifications to`);
+    
+    // Process in batches
+    for (let i = 0; i < skillsetUniqueCustomers.length; i += WHATSAPP_BATCH_SIZE) {
+      const batch = skillsetUniqueCustomers.slice(i, i + WHATSAPP_BATCH_SIZE);
+      console.log(`Processing SkillSet quick WhatsApp batch ${Math.floor(i/WHATSAPP_BATCH_SIZE) + 1} of ${Math.ceil(skillsetUniqueCustomers.length/WHATSAPP_BATCH_SIZE)}`);
+      const batchResults = await processWhatsAppBatchSkillSet(batch);
+      results.skillSet.sent += batchResults.successful.length;
+      
+      if (i + WHATSAPP_BATCH_SIZE < skillsetUniqueCustomers.length) {
+        console.log('Waiting 3 seconds before processing next SkillSet quick WhatsApp batch...');
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+    }
+    
+    // Close the SkillSet MongoDB connection
+    await skillsetClient.close();
+    console.log('SkillSet MongoDB connection closed after quick WhatsApp processing');
+    
+    // Return comprehensive results
+    console.log('Combined quick WhatsApp notification processing completed successfully');
+    return { 
+      success: true, 
+      message: 'Quick WhatsApp notifications (less than 15 minutes) for both 30DC and SkillSet processed successfully',
+      thirtyDC: {
+        total: results.thirtyDC.total,
+        eligible: results.thirtyDC.eligible,
+        tooOld: results.thirtyDC.tooOld,
+        sent: results.thirtyDC.sent
+      },
+      skillSet: {
+        total: results.skillSet.total,
+        eligible: results.skillSet.eligible,
+        tooOld: results.skillSet.tooOld,
+        sent: results.skillSet.sent
+      }
+    };
+    
+  } catch (error) {
+    console.error('Error in combined quick WhatsApp notification process:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 // Express API routes
 
 // Health check endpoint
@@ -1572,6 +1887,18 @@ app.get('/whatsapp-notifi/bothskillsettand30dc', async (req, res) => {
   try {
     console.log('Starting combined WhatsApp notification process with 10-minute delay check via API');
     const result = await sendWhatsAppNotificationsBoth();
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('API Error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// API endpoint for quick WhatsApp notifications for both platforms (less than 15 minutes old)
+app.get('/api/quick-whatsapp/both', async (req, res) => {
+  try {
+    console.log('Starting quick WhatsApp notification process (less than 15 minutes old) for both platforms via API');
+    const result = await sendQuickWhatsAppNotificationsBoth();
     res.status(200).json(result);
   } catch (error) {
     console.error('API Error:', error);
