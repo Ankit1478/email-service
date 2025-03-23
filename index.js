@@ -160,7 +160,10 @@ async function sendPromotionalEmail(customerData) {
       };
     }
     
-    const emailContent = promotionalEmail(name, siteUrl, courseType, priceData);
+    // Get the source URL to use as the direct checkout URL
+    const checkoutUrlFromDb = customerData.sourceUrl || null;
+    
+    const emailContent = promotionalEmail(name, siteUrl, courseType, priceData, checkoutUrlFromDb);
    
     // Use the retry logic for sending emails
     const sendEmailWithRetry = async () => {
@@ -780,6 +783,11 @@ async function sendWhatsAppNotification(customerData) {
     // Get the source URL for the button
     const sourceUrl = customerData.sourceUrl || `${process.env.SITE_URL}/checkout?course=${courseType}`;
     
+    // Add the whatsemail parameter to the URL
+    const buttonUrl = sourceUrl.includes('?') ? 
+        `${sourceUrl}&whatsemail=30DAYSCODING` : 
+        `${sourceUrl}?whatsemail=30DAYSCODING`;
+    
     // Define the request data for Interakt.ai API
     const requestData = {
       countryCode: "+91",
@@ -797,7 +805,7 @@ async function sendWhatsAppNotification(customerData) {
         ],
         buttonValues: {
           "1": [
-            sourceUrl       // Button URL - course checkout page
+            buttonUrl       // Button URL - course checkout page with whatsemail parameter
           ]
         }
       }
@@ -931,6 +939,11 @@ async function sendWhatsAppNotificationSkillSet(customerData) {
     // Get the source URL for the button
     const sourceUrl = customerData.sourceUrl || `${process.env.SKILLSET_URL}/${courseType}`;
     
+    // Add the whatsemail parameter to the URL
+    const buttonUrl = sourceUrl.includes('?') ? 
+        `${sourceUrl}&whatsemail=skillset` : 
+        `${sourceUrl}?whatsemail=skillset`;
+    
     // Define the request data for Interakt.ai API
     const requestData = {
       countryCode: "+91",
@@ -948,7 +961,7 @@ async function sendWhatsAppNotificationSkillSet(customerData) {
         ],
         buttonValues: {
           "1": [
-            sourceUrl  // Button URL - course checkout page
+            buttonUrl  // Button URL - course checkout page with whatsemail parameter
           ]
         }
       }
@@ -1939,5 +1952,6 @@ module.exports = {
   skillSetEmailRoute, 
   sendWhatsAppNotifications30DC,
   sendWhatsAppNotificationsSkillSet,
-  sendWhatsAppNotificationsBoth
+  sendWhatsAppNotificationsBoth,
+  sendQuickWhatsAppNotificationsBoth
 }; 
