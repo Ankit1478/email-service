@@ -46,7 +46,9 @@ const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}, checkou
           </div>
         </div>
       </div>`;
-      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/ai`;
+      checkoutUrl = checkoutUrlFromDb ? 
+        `${checkoutUrlFromDb}${checkoutUrlFromDb.includes('?') ? '&' : '?'}whatsemail=skillset` : 
+        `${siteUrl}/ai?whatsemail=skillset`;
       break;
     
     case 'data-analyst':
@@ -83,7 +85,9 @@ const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}, checkou
           </div>
         </div>
       </div>`;
-      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/data-analyst`;
+      checkoutUrl = checkoutUrlFromDb ? 
+        `${checkoutUrlFromDb}${checkoutUrlFromDb.includes('?') ? '&' : '?'}whatsemail=skillset` : 
+        `${siteUrl}/data-analyst?whatsemail=skillset`;
       break;
     
     case 'chatgpt':
@@ -120,7 +124,9 @@ const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}, checkou
           </div>
         </div>
       </div>`;
-      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/chatgpt`;
+      checkoutUrl = checkoutUrlFromDb ? 
+        `${checkoutUrlFromDb}${checkoutUrlFromDb.includes('?') ? '&' : '?'}whatsemail=skillset` : 
+        `${siteUrl}/chatgpt?whatsemail=skillset`;
       break;
       
     case 'studyabroad':
@@ -157,7 +163,9 @@ const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}, checkou
           </div>
         </div>
       </div>`;
-      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/studyabroad`;
+      checkoutUrl = checkoutUrlFromDb ? 
+        `${checkoutUrlFromDb}${checkoutUrlFromDb.includes('?') ? '&' : '?'}whatsemail=skillset` : 
+        `${siteUrl}/studyabroad?whatsemail=skillset`;
       break;
       
     case 'linkedin':
@@ -194,7 +202,9 @@ const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}, checkou
           </div>
         </div>
       </div>`;
-      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/linkedin`;
+      checkoutUrl = checkoutUrlFromDb ? 
+        `${checkoutUrlFromDb}${checkoutUrlFromDb.includes('?') ? '&' : '?'}whatsemail=skillset` : 
+        `${siteUrl}/linkedin?whatsemail=skillset`;
       break;
       
     case 'ai-apps':
@@ -231,7 +241,9 @@ const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}, checkou
           </div>
         </div>
       </div>`;
-      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/ai-apps`;
+      checkoutUrl = checkoutUrlFromDb ? 
+        `${checkoutUrlFromDb}${checkoutUrlFromDb.includes('?') ? '&' : '?'}whatsemail=skillset` : 
+        `${siteUrl}/ai-apps?whatsemail=skillset`;
       break;
       
     case 'immigrants':
@@ -268,7 +280,9 @@ const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}, checkou
           </div>
         </div>
       </div>`;
-      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/immigrants`;
+      checkoutUrl = checkoutUrlFromDb ? 
+        `${checkoutUrlFromDb}${checkoutUrlFromDb.includes('?') ? '&' : '?'}whatsemail=skillset` : 
+        `${siteUrl}/immigrants?whatsemail=skillset`;
       break;
       
     case 'video-editing':
@@ -305,7 +319,9 @@ const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}, checkou
           </div>
         </div>
       </div>`;
-      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/video-editing`;
+      checkoutUrl = checkoutUrlFromDb ? 
+        `${checkoutUrlFromDb}${checkoutUrlFromDb.includes('?') ? '&' : '?'}whatsemail=skillset` : 
+        `${siteUrl}/video-editing?whatsemail=skillset`;
       break;
       
     default:
@@ -328,7 +344,9 @@ const skillsetEmail = (name, siteUrl, courseType = 'ai', priceData = {}, checkou
           </div>
         </div>
       </div>`;
-      checkoutUrl = checkoutUrlFromDb || `${siteUrl}`;
+      checkoutUrl = checkoutUrlFromDb ? 
+        `${checkoutUrlFromDb}${checkoutUrlFromDb.includes('?') ? '&' : '?'}whatsemail=skillset` : 
+        `${siteUrl}?whatsemail=skillset`;
   }
   
   return `<!DOCTYPE html>

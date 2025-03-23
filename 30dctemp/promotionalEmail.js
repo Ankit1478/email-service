@@ -50,7 +50,9 @@ const promotionalEmail = (name, siteUrl, courseType = 'beginner', priceData = {}
         </div>
       </div>`;
       // Use the database URL if provided, otherwise fallback to constructed URL
-      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/checkout?course=beginner`;
+      checkoutUrl = checkoutUrlFromDb ? 
+        `${checkoutUrlFromDb}${checkoutUrlFromDb.includes('?') ? '&' : '?'}whatsemail=30DAYSCODING` : 
+        `${siteUrl}/checkout?course=beginner&whatsemail=30DAYSCODING`;
       break;
   
     case 'advanced':
@@ -93,12 +95,16 @@ const promotionalEmail = (name, siteUrl, courseType = 'beginner', priceData = {}
         </div>
       </div>`;
       // Use the database URL if provided, otherwise fallback to constructed URL
-      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/checkout?course=advanced`;
+      checkoutUrl = checkoutUrlFromDb ? 
+        `${checkoutUrlFromDb}${checkoutUrlFromDb.includes('?') ? '&' : '?'}whatsemail=30DAYSCODING` : 
+        `${siteUrl}/checkout?course=advanced&whatsemail=30DAYSCODING`;
       break;
     default:
       courseTypeMessage = 'Transform Your Career with Premium Tech Courses';
       // Use the database URL if provided, otherwise fallback to constructed URL
-      checkoutUrl = checkoutUrlFromDb || `${siteUrl}/checkout`;
+      checkoutUrl = checkoutUrlFromDb ? 
+        `${checkoutUrlFromDb}${checkoutUrlFromDb.includes('?') ? '&' : '?'}whatsemail=30DAYSCODING` : 
+        `${siteUrl}/checkout?whatsemail=30DAYSCODING`;
   }
   
   // Only proceed if we have a valid course type
